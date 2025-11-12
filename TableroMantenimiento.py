@@ -1,17 +1,13 @@
-import datetime
-import time
-import math
+import os
+import warnings
 import requests
 import pandas as pd
-import numpy as np
-from dateutil import parser #Para unificar formato fechas de intermitencias
-import warnings
-from urllib3.exceptions import InsecureRequestWarning
-import os
-from datetime import datetime, timedelta, timezone
 from glob import glob
+from datetime import datetime, timedelta, timezone
 from dateutil import parser
-import requests
+from urllib3.exceptions import InsecureRequestWarning
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 
 #Análisis de Intermitencia Nocturna
@@ -65,7 +61,7 @@ for key in archivos_activas.keys() & archivos_estados.keys():
 
         # Convertir key en fecha
         try:
-            fecha_key = datetime.strptime(key, "%b%d")  # e.g., "jun09"
+            fecha_key = datetime.strptime(key, "%B%d")  # e.g., "september18"
             fecha_key = fecha_key.replace(year=datetime.now().year)
         except Exception as e:
             print(f"⚠️ No se pudo parsear {key} como fecha válida: {e}")
@@ -112,26 +108,6 @@ for key in archivos_activas.keys() & archivos_estados.keys():
     except Exception as e:
         print(f"❌ Error procesando {key}: {e}")
 
-# Mostrar resultado final
-#print(f"\n📊 Total de filas resultantes: {len(df_resultado_total)}")  
-
-## Esquema consolidado
-#carpeta = "C:/Users/mmonto37/Documents/SAMA/Mantenimiento"
-archivos = glob(os.path.join(carpeta, "*.csv"))
-
-def leer_csv_robusto(path):
-    try:
-        df = pd.read_csv(path, dtype=str)
-        if df.shape[1] == 1:
-            primera_linea = df.columns[0]
-            if ',' in primera_linea:
-                df = pd.read_csv(path, dtype=str, sep=',')
-            elif ';' in primera_linea:
-                df = pd.read_csv(path, dtype=str, sep=';')
-        return df
-    except Exception as e:
-        print(f"❌ Error leyendo archivo {path}: {e}")
-        return pd.DataFrame()
 
 def normalizar_mes(fecha_str):
     meses = {
@@ -274,7 +250,7 @@ sm_codes =  ['501', '502', '503', '504', '505', '506', '507', '508', '509', '510
 def obtener_metadata_estacion(tipo, code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/{tipo}_{code}/"
     try:
-        resp = requests.get(url, verify=False)
+        resp = requests.get(url, verify=False, timeout=10)
         if resp.status_code == 200:
             d = resp.json()
             return {
@@ -292,27 +268,44 @@ def obtener_metadata_estacion(tipo, code):
         print(f"Error al consultar {url}: {e}")
     return None
 
-# Recolectar metadata de todas las estaciones
+# Recolectar metadata de todas las estaciones en paralelo
 resumen = []
+
+def fetch_metadata_batch(tipo, codes):
+    results = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(obtener_metadata_estacion, tipo, code): code for code in codes}
+        for future in as_completed(futures):
+            data = future.result()
+            if data:
+                results.append(data)
+    return results
+
+print("🔄 Cargando metadata de estaciones en paralelo...")
 for tipo, codes in [("sp", sp_codes), ("sn", sn_codes), ("sm", sm_codes)]:
-    for code in codes:
-        data = obtener_metadata_estacion(tipo, code)
-        if data:
-            resumen.append(data)
+    batch_results = fetch_metadata_batch(tipo, codes)
+    resumen.extend(batch_results)
+print(f"✅ Metadata cargada: {len(resumen)} estaciones")
 
 # Crear DataFrame final
 df_metadata = pd.DataFrame(resumen)
 
 ## Cruce de Info API con datos de Municipio y Subregión¶
 # Cargar el archivo Excel (Base de datos estaciones SAMA)
-df_excel = pd.read_excel('estacionesSAMADB.xlsx', usecols=[
-    'GRUPO', 'MUNICIPIO', 'NOM_EST', 'COD_EST', 'TIPO', 'COMUN_PRIORIZ', 'CORRIENTE', 'LAT', 'LONG'])
-
-# Reorganizar las columnas
-df_excel = df_excel[['COD_EST', 'TIPO', 'GRUPO', 'MUNICIPIO', 'NOM_EST', 'COMUN_PRIORIZ', 'CORRIENTE', 'LAT', 'LONG']]
-
-# LIMPIAR columna COD_EST
-df_excel['COD_EST'] = df_excel['COD_EST'].astype(str).str.strip().str.lower()
+try:
+    df_excel = pd.read_excel('estacionesSAMADB.xlsx', usecols=[
+        'GRUPO', 'MUNICIPIO', 'NOM_EST', 'COD_EST', 'TIPO', 'COMUN_PRIORIZ', 'CORRIENTE', 'LAT', 'LONG'])
+    
+    # Reorganizar las columnas
+    df_excel = df_excel[['COD_EST', 'TIPO', 'GRUPO', 'MUNICIPIO', 'NOM_EST', 'COMUN_PRIORIZ', 'CORRIENTE', 'LAT', 'LONG']]
+    
+    # LIMPIAR columna COD_EST
+    df_excel['COD_EST'] = df_excel['COD_EST'].astype(str).str.strip().str.lower()
+    excel_loaded = True
+except FileNotFoundError:
+    print("⚠️ Archivo 'estacionesSAMADB.xlsx' no encontrado. Continuando sin datos de Excel...")
+    df_excel = pd.DataFrame()
+    excel_loaded = False
 
 #Correción de regiones erroneas
 # Diccionario con los valores correctos
@@ -331,16 +324,20 @@ df_excel['COD_EST'] = df_excel['COD_EST'].astype(str).str.strip().str.lower()
 # 1. Renombrar la columna 'municipio' en df_metadata data data data 
 df_metadata  = df_metadata.rename(columns={'municipio': 'municipio_num'})
 
-# 2. Crear un DataFrame auxiliar con solo las columnas necesarias de df_excel
-df_municipio = df_excel[['COD_EST', 'MUNICIPIO']].rename(columns={
-    'COD_EST': 'codigo',  # para que coincida con df_metadata
-    'MUNICIPIO': 'Municipio'
-})
-
-# 3. Hacer el merge con df_metadata usando la columna común 'codigo'
-df_metadata = df_metadata.merge(df_municipio, on='codigo', how='left')
-
-df_metadata['Municipio'] = df_metadata['Municipio'].str.title()
+if excel_loaded and not df_excel.empty:
+    # 2. Crear un DataFrame auxiliar con solo las columnas necesarias de df_excel
+    df_municipio = df_excel[['COD_EST', 'MUNICIPIO']].rename(columns={
+        'COD_EST': 'codigo',  # para que coincida con df_metadata
+        'MUNICIPIO': 'Municipio'
+    })
+    
+    # 3. Hacer el merge con df_metadata usando la columna común 'codigo'
+    df_metadata = df_metadata.merge(df_municipio, on='codigo', how='left')
+    
+    df_metadata['Municipio'] = df_metadata['Municipio'].str.title()
+else:
+    # Si no hay Excel, usar municipio_num como Municipio
+    df_metadata['Municipio'] = df_metadata.get('municipio_num', 'Desconocido')
 
 #Para subregiones
 #Renombrar la columna 'region' a 'subregion_num'
@@ -427,7 +424,12 @@ def obtener_datos(tipo, code, calidad):
     else: 
         url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/sm_{code}/meteorologia?&page=1"
     
-    response = requests.get(url, verify=False)
+    try:
+        response = requests.get(url, verify=False, timeout=30)
+    except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+        print(f"⚠️ Timeout/Error para {tipo}_{code} calidad {calidad}")
+        return None, None
+    
     if response.status_code == 200:
         data = response.json()
         if data and 'values' in data and len(data['values']) > 0:
@@ -436,21 +438,36 @@ def obtener_datos(tipo, code, calidad):
             return es_2025, fecha
     return None, None
 
+# Función para procesar una estación completa (ambas calidades)
+def procesar_estacion(tipo, code):
+    estacion = f"{tipo}_{code}"
+    fila = {"estacion_code": estacion}
+    
+    for calidad in [1, 2]:
+        es_2025, fecha = obtener_datos(tipo, code, calidad)
+        fila[f"cal{calidad}_es_2025"] = es_2025
+        fila[f"cal{calidad}_ultima_fecha"] = fecha
+    
+    return fila
+
 # Lista para los resultados
 resumen = []
 
-# Procesar todas las estaciones
-for tipo, codes in [("sp", sp_codes), ("sn", sn_codes), ("sm", sm_codes)]:
-    for code in codes:
-        estacion = f"{tipo}_{code}"
-        fila = {"estacion_code": estacion}
+# Procesar todas las estaciones en paralelo
+print("🔄 Cargando datos de estaciones en paralelo...")
+with ThreadPoolExecutor(max_workers=20) as executor:
+    futures = []
+    for tipo, codes in [("sp", sp_codes), ("sn", sn_codes), ("sm", sm_codes)]:
+        for code in codes:
+            futures.append(executor.submit(procesar_estacion, tipo, code))
+    
+    for i, future in enumerate(as_completed(futures), 1):
+        result = future.result()
+        resumen.append(result)
+        if i % 10 == 0:
+            print(f"  Procesadas {i}/{len(futures)} estaciones...")
 
-        for calidad in [1, 2]:
-            es_2025, fecha = obtener_datos(tipo, code, calidad)
-            fila[f"cal{calidad}_es_2025"] = es_2025
-            fila[f"cal{calidad}_ultima_fecha"] = fecha
-
-        resumen.append(fila)
+print(f"✅ Datos cargados: {len(resumen)} estaciones")
 
 # Crear DataFrame final
 df_final = pd.DataFrame(resumen)
@@ -574,8 +591,8 @@ def procesar_fecha(fecha_str):
     hora_formateada = fecha_dt.strftime("%H:%M")
     return estado, fecha_formateada, hora_formateada, dias_diferencia
 
-# --- Consulta estaciones tipo "sa" ---
-for code in sa_codes:
+# Función para procesar una estación de alarma
+def procesar_estacion_alarma(code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/sa_{code}/alarma?page=1"
     try:
         response = requests.get(url, verify=False, timeout=10)
@@ -584,18 +601,19 @@ for code in sa_codes:
             if data.get("values"):
                 ultima = data["values"][0]
                 estado, fecha_act, hora_act, dias = procesar_fecha(ultima["fecha"])
-                datos_estaciones.append({
+                return {
                     "estacion_code": f"sa_{code}",
                     "Estado_ultima_semana": estado,
                     "fecha_ultima_actividad": fecha_act,
                     "hora_ultima_actividad": hora_act,
                     "dias_desde_ultima_actividad": dias
-                })
+                }
     except Exception as e:
         print(f"Error con sa_{code}: {e}")
+    return None
 
-# --- Consulta estaciones tipo "sn" (cámara) ---
-for code in sn_codes:
+# Función para procesar una estación de cámara
+def procesar_estacion_camara(code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/sn_{code}/camara?page=1"
     try:
         response = requests.get(url, verify=False, timeout=10)
@@ -604,15 +622,34 @@ for code in sn_codes:
             if data.get("values"):
                 ultima = data["values"][0]
                 estado, fecha_act, hora_act, dias = procesar_fecha(ultima["fecha"])
-                datos_estaciones.append({
+                return {
                     "estacion_code": f"sn_{code}",
                     "Estado_ultima_semana": estado,
                     "fecha_ultima_actividad": fecha_act,
                     "hora_ultima_actividad": hora_act,
                     "dias_desde_ultima_actividad": dias
-                })
+                }
     except Exception as e:
         print(f"Error con sn_{code}: {e}")
+    return None
+
+# --- Consulta estaciones en paralelo ---
+print("🔄 Cargando datos de alarmas y cámaras en paralelo...")
+datos_estaciones = []
+
+with ThreadPoolExecutor(max_workers=15) as executor:
+    # Procesar alarmas
+    futures_alarma = {executor.submit(procesar_estacion_alarma, code): code for code in sa_codes}
+    # Procesar cámaras
+    futures_camara = {executor.submit(procesar_estacion_camara, code): code for code in sn_codes}
+    
+    all_futures = {**futures_alarma, **futures_camara}
+    for future in as_completed(all_futures):
+        result = future.result()
+        if result:
+            datos_estaciones.append(result)
+
+print(f"✅ Datos de alarmas/cámaras cargados: {len(datos_estaciones)} estaciones")
 
 # --- Crear el DataFrame ---
 df_estado_estaciones = pd.DataFrame(datos_estaciones)
@@ -709,9 +746,6 @@ from dash import dcc, html, dash_table
 from dash.dependencies import Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
-import warnings
-warnings.filterwarnings("ignore")
-
 
 
 # Unir df_ordenado con df_metadata para obtener georreferencia
@@ -1065,4 +1099,8 @@ def descargar_interrupciones(n_clicks):
 # INICIAR SERVIDOR
 # ====================
 if __name__ == "__main__":
+    print("\n" + "="*60)
+    print("🚀 Iniciando servidor Dash...")
+    print("📍 URL: http://127.0.0.1:8050")
+    print("="*60 + "\n")
     app.run(debug=True)  #, port=8055

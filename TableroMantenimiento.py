@@ -1101,6 +1101,6 @@ def descargar_interrupciones(n_clicks):
 if __name__ == "__main__":
     print("\n" + "="*60)
     print("🚀 Iniciando servidor Dash...")
-    print("📍 URL: http://127.0.0.1:8050")
+    print("📍 URL: http://127.0.0.1:8095")
     print("="*60 + "\n")
-    app.run(debug=True)  #, port=8055
+    app.run(debug=True, port=8095)  #, default port=8050

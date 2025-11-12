@@ -15,7 +15,7 @@ import requests
 
 
 #Análisis de Intermitencia Nocturna
-carpeta = "C:/Users/mmonto37/Documents/SAMA/Mantenimiento/Analisis5"
+carpeta = "./Analisis6"
 archivos = glob(os.path.join(carpeta, "*.csv"))
 
 def leer_csv_robusto(path):
@@ -305,7 +305,7 @@ df_metadata = pd.DataFrame(resumen)
 
 ## Cruce de Info API con datos de Municipio y Subregión¶
 # Cargar el archivo Excel (Base de datos estaciones SAMA)
-df_excel = pd.read_excel('Base de datos estaciones SAMA.xlsx', usecols=[
+df_excel = pd.read_excel('estacionesSAMADB.xlsx', usecols=[
     'GRUPO', 'MUNICIPIO', 'NOM_EST', 'COD_EST', 'TIPO', 'COMUN_PRIORIZ', 'CORRIENTE', 'LAT', 'LONG'])
 
 # Reorganizar las columnas

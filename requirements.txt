@@ -1,0 +1,8 @@
+pandas
+dash
+plotly
+requests
+python-dateutil
+openpyxl
+urllib3
+

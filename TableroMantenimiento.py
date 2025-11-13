@@ -956,6 +956,8 @@ tabla_inactivas_alcam = dash_table.DataTable(
 # 🔧 Creación del dashboard en Dash
 # =============================
 app = dash.Dash(__name__)
+# Título que aparece en la pestaña del navegador
+app.title = "Mantenimiento SAMA"
 
 app.layout = html.Div([
     html.H1(

@@ -10,6 +10,20 @@ Propósito
 - Visualizar en un dashboard (Dash) la cantidad de intermitencias por estación, su localización y detalles por municipio/subregión.
 - Facilitar la revisión operativa y la priorización de mantenimiento.
 
+## Autora
+
+- **Maria Cristina Montoya** - Cálidad de Datos - **Github:** [@mcml1225](https://github.com/mcml1225)
+
+
+## Soporte
+
+- **Maria Cristina Montoya** - Cálidad de Datos - **Github:** [mmonto37@eafit.edu.co](mailito:mmonto37@eafit.edu.co)
+- **Sergio Camilo Garzón** - Desarrollo de Software - **Github:** [scgarzonp@eafit.edu.co](mailito:scgarzonp@eafit.edu.co)
+
+Este proyecto es financiado por la  **Gobernación de Antioquia** (AMVA) y administrado por la **Universidad Eafit**.
+
+
+
 Estructura de datos esperada
 ----------------------------
 - Carpeta `Analisis6/` (ya incluida en el repositorio) con archivos CSV con nombres del tipo:
@@ -21,7 +35,7 @@ Estructura de datos esperada
 Requisitos
 ----------
 - Python 3.8+ (recomendado)
-- Conexión a Internet para consultar la API pública de metadata (opcional, pero recomendada).
+
 
 Instalación
 -----------
@@ -38,7 +52,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Nota: si `pip install -r requirements.txt` falló antes, se corrigió el archivo `requirements.txt` en este repositorio (eliminé accidentalmente un bloque de código que lo rodeaba). Si ves errores, por favor comparte la salida y lo reviso.
+
 
 Ejecutar el dashboard
 ---------------------
@@ -53,7 +67,7 @@ python TableroMantenimiento.py
 4. Abre tu navegador en:
 
 ```
-http://127.0.0.1:8050
+http://127.0.0.1:8095
 ```
 
 

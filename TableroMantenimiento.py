@@ -9,9 +9,11 @@ from urllib3.exceptions import InsecureRequestWarning
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
+# Import configuration
+from config import DATA_FOLDER, APP_HOST, APP_PORT, DEBUG_MODE, get_config_info
 
 #Análisis de Intermitencia Nocturna
-carpeta = "./Analisis6"
+carpeta = DATA_FOLDER
 archivos = glob(os.path.join(carpeta, "*.csv"))
 
 def leer_csv_robusto(path):
@@ -1102,8 +1104,5 @@ def descargar_interrupciones(n_clicks):
 # INICIAR SERVIDOR
 # ====================
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("🚀 Iniciando servidor Dash...")
-    print("📍 URL: http://127.0.0.1:8095")
-    print("="*60 + "\n")
-    app.run(debug=True, port=8095)  #, default port=8050
+    print(get_config_info())
+    app.run(debug=DEBUG_MODE, host=APP_HOST, port=APP_PORT)

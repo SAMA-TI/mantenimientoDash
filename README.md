@@ -26,6 +26,8 @@
     - [Método 1: Instalación automática](#método-1-instalación-automática-recomendado-para-configuraciones-simples)
     - [Método 2: Configuración manual](#método-2-configuración-manual-recomendado-para-control-completo)
 - [Actualización de Datos](#actualización-de-datos)
+- [Configuración](#configuración)
+- [Docker Deployment](#docker-deployment)
 - [Variables de Entorno y Configuración](#variables-de-entorno-y-configuración)
 - [Comportamiento y Notas Técnicas](#comportamiento-y-notas-técnicas)
 - [Troubleshooting (Solución de Problemas)](#troubleshooting-solución-de-problemas)
@@ -60,7 +62,7 @@ Propósito
 - **Maria Cristina Montoya** - Calidad de Datos - **Email:** [mmonto37@eafit.edu.co](mailto:mmonto37@eafit.edu.co)
 - **Sergio Camilo Garzón** - Desarrollo de Software - **Email:** [scgarzonp@eafit.edu.co](mailto:scgarzonp@eafit.edu.co)
 
-Este proyecto es financiado por la  **Gobernación de Antioquia** (AMVA) y administrado por la **Universidad Eafit**.
+Este proyecto es financiado por la  **Gobernación de Antioquia** y administrado por la **Universidad Eafit**.
 
 
 
@@ -111,7 +113,7 @@ pip install -r requirements.txt
 
 
 
-Ejecutar el dashboard
+Ejecutar el dashboard (Ambiente de Desarrollo)
 ---------------------
 1. Asegúrate de que la carpeta `Analisis6/` contiene los CSV de entrada (ya está incluida en el repo de ejemplo).
 2. (Opcional) Si tienes `estacionesSAMADB.xlsx`, colócalo en la raíz del proyecto para obtener municipio y subregión más precisos.
@@ -121,7 +123,6 @@ Ejecutar el dashboard
 python TableroMantenimiento.py
 ```
 
-// TODO PENDIENTE INCLUIR EL O LOS PUERTOS
 
 4. Abre tu navegador en:
 
@@ -160,7 +161,7 @@ kill PID
 
 Despliegue
 ----------
-Para el despliegue utilizaremos un tunel (cloudflared tunnel) para evitar abrir los puertos, además de otras ventajas que brinda este servicio como protección a ataques DDOS.
+Para el despliegue utilizaremos un tunel (cloudflared tunnel) para evitar abrir los puertos, además de otras ventajas que brinda este servicio como protección a ataques DDoS básica, actualización gratuita y automática de certificados SSL/TLS, balanceo de carga básica, entre otros.
 
 ## Estándar de Configuración de Túneles
 
@@ -591,12 +592,162 @@ kill <PID>
 python TableroMantenimiento.py
 ```
 
-Variables de Entorno y Configuración
------------------------------------
+Configuración
+-------------
 
-La aplicación usa configuraciones directas en el código. Las principales configuraciones son:
+### Archivo de Configuración Centralizado
 
-- **Puerto del servidor:** 8095 (definido en `TableroMantenimiento.py`)
+Todas las variables configurables están centralizadas en el archivo `config.py`. Esto facilita la gestión y preparación para Docker.
+
+#### Variables Principales en `config.py`:
+
+**Servidor:**
+- `APP_HOST`: Host de la aplicación (default: `0.0.0.0`)
+- `APP_PORT`: Puerto del servidor (default: `8000`)
+- `DEBUG_MODE`: Modo debug (default: `False`)
+
+**Datos:**
+- `DATA_FOLDER`: Carpeta con los archivos CSV (default: `./Analisis6`)
+
+**Base de Datos (para uso futuro):**
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+
+**API:**
+- `API_TIMEOUT`: Timeout de conexiones API (default: `30`)
+- `API_MAX_RETRIES`: Reintentos de API (default: `3`)
+
+**Análisis:**
+- `MAX_WORKERS`: Workers para procesamiento paralelo (default: `10`)
+- `CACHE_ENABLED`: Habilitar caché (default: `True`)
+
+### Variables de Entorno
+
+Puedes sobrescribir las configuraciones usando variables de entorno. Esto es especialmente útil para Docker.
+
+1. **Crea un archivo `.env`** (basado en `.env.example`):
+
+```bash
+cp .env.example .env
+```
+
+2. **Edita `.env`** con tus valores:
+
+```bash
+APP_HOST=0.0.0.0
+APP_PORT=8000
+DEBUG_MODE=False
+DATA_FOLDER=./Analisis6
+```
+
+3. **Las variables de entorno tienen prioridad** sobre los valores por defecto en `config.py`
+
+### Modificar Configuración
+
+#### Opción 1: Editar `config.py` directamente
+
+```python
+# Cambiar valores por defecto en config.py
+APP_PORT = int(os.getenv("APP_PORT", "8095"))  # Cambia 8000 a 8095
+```
+
+#### Opción 2: Usar variables de entorno
+
+```bash
+# Temporal (solo para la sesión actual)
+export APP_PORT=8095
+python TableroMantenimiento.py
+
+# Permanente (usando archivo .env)
+echo "APP_PORT=8095" >> .env
+python TableroMantenimiento.py
+```
+
+#### Opción 3: Para Gunicorn
+
+```bash
+# Usando gunicorn con la configuración
+gunicorn -c gunicorn_config.py TableroMantenimiento:server
+```
+
+Docker Deployment
+-----------------
+
+### Construir y Ejecutar con Docker
+
+1. **Construir la imagen:**
+
+```bash
+docker build -t mantenimiento-dash:latest .
+```
+
+2. **Ejecutar el contenedor:**
+
+```bash
+docker run -d \
+  --name mantenimiento_dashboard \
+  -p 8000:8000 \
+  -v $(pwd)/Analisis6:/app/Analisis6:ro \
+  -e APP_PORT=8000 \
+  -e DEBUG_MODE=false \
+  mantenimiento-dash:latest
+```
+
+### Usar Docker Compose (Recomendado)
+
+1. **Iniciar la aplicación:**
+
+```bash
+docker-compose up -d
+```
+
+2. **Ver logs:**
+
+```bash
+docker-compose logs -f
+```
+
+3. **Detener la aplicación:**
+
+```bash
+docker-compose down
+```
+
+4. **Reconstruir después de cambios:**
+
+```bash
+docker-compose up -d --build
+```
+
+### Configuración de Puertos para Docker
+
+Edita el archivo `.env` para cambiar el puerto:
+
+```bash
+APP_PORT=8095
+```
+
+O edita `docker-compose.yml`:
+
+```yaml
+ports:
+  - "8095:8000"  # Puerto_Host:Puerto_Contenedor
+```
+
+### Producción con Docker
+
+Para producción, la imagen usa Gunicorn automáticamente:
+
+- 4 workers por defecto
+- Timeout de 300 segundos
+- Logs en stdout/stderr
+- Healthcheck configurado
+
+Variables de Entorno y Configuración (Legacy)
+--------------------------------------------
+
+**Nota:** Esta sección describe configuraciones antiguas. Ahora se recomienda usar `config.py` y variables de entorno.
+
+- **Puerto del servidor:** Configurado en `config.py` (default: 8000)
 - **Carpeta de datos:** `./Analisis6` (modificable en el código)
 - **API de SAMA:** `https://sigran.antioquia.gov.co/api/v1/estaciones/`
 - **Archivo Excel opcional:** `estacionesSAMADB.xlsx` (debe estar en la raíz del proyecto)

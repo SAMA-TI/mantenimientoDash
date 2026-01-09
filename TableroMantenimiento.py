@@ -76,8 +76,16 @@ for key in archivos_activas.keys() & archivos_estados.keys():
         # Combinar fecha y hora para crear datetime
         df_activas['fecha_hora'] = pd.to_datetime(df_activas['fecha'] + ' ' + df_activas['hora'], errors='coerce')
         df_estados['fecha_hora_ultima'] = pd.to_datetime(
-            df_estados['fecha_ultima_actividad'] + ' ' + df_estados['hora_ultima_actividad'], errors='coerce'
+            df_estados['fecha_ultima_actividad'] + ' ' + df_estados['hora_ultima_actividad'],
+            errors='coerce',
+            dayfirst=True,
         )
+
+        # Derive the target date from the data instead of today’s year
+        fecha_key = df_estados['fecha_hora_ultima'].dropna().dt.normalize().iloc[0]
+        dia_anterior = fecha_key - timedelta(days=1)
+        str_fecha_key = fecha_key.strftime('%Y-%m-%d')
+        str_dia_anterior = dia_anterior.strftime('%Y-%m-%d')
 
         # Filtrar fechas específicas
         df_activas_filtrado = df_activas[df_activas['fecha_hora'].dt.strftime('%Y-%m-%d') == str_dia_anterior]
@@ -169,8 +177,16 @@ for key in archivos_activas.keys() & archivos_estados.keys():
 
         df_activas['fecha_hora'] = pd.to_datetime(df_activas['fecha'] + ' ' + df_activas['hora'], errors='coerce')
         df_estados['fecha_hora_ultima'] = pd.to_datetime(
-            df_estados['fecha_ultima_actividad'] + ' ' + df_estados['hora_ultima_actividad'], errors='coerce'
+            df_estados['fecha_ultima_actividad'] + ' ' + df_estados['hora_ultima_actividad'],
+            errors='coerce',
+            dayfirst=True,
         )
+
+        # Derive the target date from the data instead of today’s year
+        fecha_key = df_estados['fecha_hora_ultima'].dropna().dt.normalize().iloc[0]
+        dia_anterior = fecha_key - timedelta(days=1)
+        str_fecha_key = fecha_key.strftime('%Y-%m-%d')
+        str_dia_anterior = dia_anterior.strftime('%Y-%m-%d')
 
         df_activas_filtrado = df_activas[df_activas['fecha_hora'].dt.strftime('%Y-%m-%d') == str_dia_anterior]
         df_estados_filtrado = df_estados[df_estados['fecha_hora_ultima'].dt.strftime('%Y-%m-%d') == str_fecha_key]
@@ -495,19 +511,27 @@ df_final["ultima_fecha_reportada"] = df_final[["cal1_ultima_fecha", "cal2_ultima
 df_final["dias_desde_ultima_actividad"] = (hoy - df_final["ultima_fecha_reportada"]).dt.days
 df_final.loc[df_final["ultima_fecha_reportada"].isna(), "dias_desde_ultima_actividad"] = pd.NA
 
-# 3. Verificar si la última fecha es de 2025
-es_2025_cal1 = df_final["cal1_ultima_fecha"].dt.year == 2025
-es_2025_cal2 = df_final["cal2_ultima_fecha"].dt.year == 2025
+anios_validos = {2025, 2026}
+
+# 3. Verificar si la última fecha es de 2025 o 2026
 
 df_final["ultima_fecha_2025"] = pd.NaT
-df_final["calidad_ultima_reportada"] = pd.NA
+df_final["calidad_ultima_reportada"] = pd.NA 
 
 for i, row in df_final.iterrows():
-    f1, f2 = row["cal1_ultima_fecha"], row["cal2_ultima_fecha"]
-    if pd.notnull(f1) and f1.year == 2025 and (pd.isnull(f2) or f1 >= f2 or f2.year != 2025):
+
+    f1, f2 = row["cal1_ultima_fecha"], row["cal2_ultima_fecha"] 
+
+    if (
+        pd.notnull(f1)
+        and f1.year in anios_validos
+        and (pd.isnull(f2) or f1 >= f2 or f2.year not in anios_validos)
+    ):
+
         df_final.at[i, "ultima_fecha_2025"] = f1
-        df_final.at[i, "calidad_ultima_reportada"] = "cal1"
-    elif pd.notnull(f2) and f2.year == 2025:
+        df_final.at[i, "calidad_ultima_reportada"] = "cal1" 
+
+    elif pd.notnull(f2) and f2.year in anios_validos:
         df_final.at[i, "ultima_fecha_2025"] = f2
         df_final.at[i, "calidad_ultima_reportada"] = "cal2"
         
@@ -823,7 +847,6 @@ fecha_mas_reciente_str = traducir_fecha_espanol(fecha_mas_reciente)
 # ========================
 # 🔍 TABLAS 
 # ========================
-
 # ============
 # 🎨 Estilos
 # ============

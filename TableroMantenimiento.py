@@ -148,7 +148,10 @@ df_resultado_total = pd.DataFrame()
 
 fechas_analizadas = []
 
-for key in archivos_activas.keys() & archivos_estados.keys():
+# Ordenar keys para detectar cambios de año
+keys_ordenados = sorted(archivos_activas.keys() & archivos_estados.keys())
+
+for key in keys_ordenados:
     print(f"\n🔍 Procesando dia: {key}")
     
     try:
@@ -167,7 +170,16 @@ for key in archivos_activas.keys() & archivos_estados.keys():
 
         key_normalizado = normalizar_mes(key)
         fecha_key = datetime.strptime(key_normalizado, "%b%d")
-        fecha_key = fecha_key.replace(year=datetime.now().year)
+        
+        # Asignar el año correcto detectando cambios de año
+        año_actual = datetime.now().year
+        mes_actual = datetime.now().month
+        fecha_key = fecha_key.replace(year=año_actual)
+        
+        # Si la fecha es de un mes futuro respecto al mes actual,
+        # debe ser del año anterior
+        if fecha_key.month > mes_actual:
+            fecha_key = fecha_key.replace(year=año_actual - 1)
 
         fechas_analizadas.append(fecha_key)
 

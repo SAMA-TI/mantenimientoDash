@@ -8,6 +8,10 @@ from dateutil import parser
 from urllib3.exceptions import InsecureRequestWarning
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import time
+import socket
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Import configuration
 from config import DATA_FOLDER, APP_HOST, APP_PORT, DEBUG_MODE, get_config_info
@@ -15,6 +19,59 @@ from config import DATA_FOLDER, APP_HOST, APP_PORT, DEBUG_MODE, get_config_info
 #Análisis de Intermitencia Nocturna
 carpeta = DATA_FOLDER
 archivos = glob(os.path.join(carpeta, "*.csv"))
+
+# --- Network helpers: session with retries and safe_get ---
+def create_session(retries=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504)):
+    session = requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=frozenset(['GET', 'POST'])
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+    return session
+
+# Global session used across the script
+SESSION = create_session(retries=3, backoff_factor=0.5)
+
+# Safe GET with simple exponential backoff for DNS/connection issues
+def safe_get(url, timeout=10, attempts=3):
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = SESSION.get(url, verify=False, timeout=timeout)
+            return resp
+        except requests.exceptions.RequestException as e:
+            msg = str(e)
+            # If likely a DNS resolution error or connection error, retry
+            if 'Failed to resolve' in msg or isinstance(e.__cause__, socket.gaierror) or isinstance(e, requests.exceptions.ConnectionError):
+                wait = 0.5 * (2 ** (attempt - 1))
+                print(f"⚠️ Intento {attempt}/{attempts} falló para {url}: {e}. Reintentando en {wait}s...")
+                time.sleep(wait)
+                continue
+            else:
+                print(f"⚠️ Error al solicitar {url}: {e}")
+                return None
+    print(f"❌ Todos los reintentos fallaron para {url}")
+    return None
+
+# Default concurrency limits (puedes ajustar vía variables de entorno)
+METADATA_WORKERS = int(os.environ.get('METADATA_WORKERS', '5'))
+DATA_WORKERS = int(os.environ.get('DATA_WORKERS', '6'))
+ALARM_WORKERS = int(os.environ.get('ALARM_WORKERS', '4'))
+
+# Inicializar métricas mostradas en el dashboard
+total_metadata_intentadas = 0
+exitos_metadata = 0
+pct_metadata = 0.0
+
+total_estaciones_datos = 0
+exitos_datos = 0
+pct_datos = 0.0
 
 def leer_csv_robusto(path):
     try:
@@ -280,7 +337,9 @@ sm_codes =  ['501', '502', '503', '504', '505', '506', '507', '508', '509', '510
 def obtener_metadata_estacion(tipo, code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/{tipo}_{code}/"
     try:
-        resp = requests.get(url, verify=False, timeout=10)
+        resp = safe_get(url, timeout=10)
+        if resp is None:
+            return None
         if resp.status_code == 200:
             d = resp.json()
             return {
@@ -295,7 +354,7 @@ def obtener_metadata_estacion(tipo, code):
                 "region": d.get("region")
             }
     except Exception as e:
-        print(f"Error al consultar {url}: {e}")
+        print(f"Error al procesar {url}: {e}")
     return None
 
 # Recolectar metadata de todas las estaciones en paralelo
@@ -303,7 +362,7 @@ resumen = []
 
 def fetch_metadata_batch(tipo, codes):
     results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=METADATA_WORKERS) as executor:
         futures = {executor.submit(obtener_metadata_estacion, tipo, code): code for code in codes}
         for future in as_completed(futures):
             data = future.result()
@@ -316,6 +375,15 @@ for tipo, codes in [("sp", sp_codes), ("sn", sn_codes), ("sm", sm_codes)]:
     batch_results = fetch_metadata_batch(tipo, codes)
     resumen.extend(batch_results)
 print(f"✅ Metadata cargada: {len(resumen)} estaciones")
+
+# Porcentaje de metadata obtenida vs intentadas
+try:
+    total_metadata_intentadas = len(sp_codes) + len(sn_codes) + len(sm_codes)
+    exitos_metadata = len(resumen)
+    pct_metadata = round((exitos_metadata / total_metadata_intentadas) * 100, 2) if total_metadata_intentadas > 0 else 0.0
+    print(f"ℹ️ Metadata: {exitos_metadata}/{total_metadata_intentadas} estaciones respondieron ({pct_metadata}%)")
+except Exception as e:
+    print(f"⚠️ Error calculando porcentaje de metadata: {e}")
 
 # Crear DataFrame final
 df_metadata = pd.DataFrame(resumen)
@@ -455,7 +523,9 @@ def obtener_datos(tipo, code, calidad):
         url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/sm_{code}/meteorologia?&page=1"
     
     try:
-        response = requests.get(url, verify=False, timeout=30)
+        response = safe_get(url, timeout=30)
+        if response is None:
+            return None, None
     except (requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
         print(f"⚠️ Timeout/Error para {tipo}_{code} calidad {calidad}")
         return None, None
@@ -485,7 +555,7 @@ resumen = []
 
 # Procesar todas las estaciones en paralelo
 print("🔄 Cargando datos de estaciones en paralelo...")
-with ThreadPoolExecutor(max_workers=20) as executor:
+with ThreadPoolExecutor(max_workers=DATA_WORKERS) as executor:
     futures = []
     for tipo, codes in [("sp", sp_codes), ("sn", sn_codes), ("sm", sm_codes)]:
         for code in codes:
@@ -518,6 +588,15 @@ hoy = pd.Timestamp.now(tz=None)
 
 # 1. Última fecha reportada entre cal1 y cal2
 df_final["ultima_fecha_reportada"] = df_final[["cal1_ultima_fecha", "cal2_ultima_fecha"]].max(axis=1)
+
+# Porcentaje de estaciones con al menos una respuesta de datos
+try:
+    total_estaciones_datos = len(df_final)
+    exitos_datos = int(df_final["ultima_fecha_reportada"].notna().sum())
+    pct_datos = round((exitos_datos / total_estaciones_datos) * 100, 2) if total_estaciones_datos > 0 else 0.0
+    print(f"ℹ️ Datos: {exitos_datos}/{total_estaciones_datos} estaciones respondieron ({pct_datos}%)")
+except Exception as e:
+    print(f"⚠️ Error calculando porcentaje de datos: {e}")
 
 # 2. Días desde la última fecha
 df_final["dias_desde_ultima_actividad"] = (hoy - df_final["ultima_fecha_reportada"]).dt.days
@@ -633,7 +712,9 @@ def procesar_fecha(fecha_str):
 def procesar_estacion_alarma(code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/sa_{code}/alarma?page=1"
     try:
-        response = requests.get(url, verify=False, timeout=10)
+        response = safe_get(url, timeout=10)
+        if response is None:
+            return None
         if response.status_code == 200:
             data = response.json()
             if data.get("values"):
@@ -654,7 +735,9 @@ def procesar_estacion_alarma(code):
 def procesar_estacion_camara(code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/sn_{code}/camara?page=1"
     try:
-        response = requests.get(url, verify=False, timeout=10)
+        response = safe_get(url, timeout=10)
+        if response is None:
+            return None
         if response.status_code == 200:
             data = response.json()
             if data.get("values"):
@@ -675,7 +758,7 @@ def procesar_estacion_camara(code):
 print("🔄 Cargando datos de alarmas y cámaras en paralelo...")
 datos_estaciones = []
 
-with ThreadPoolExecutor(max_workers=15) as executor:
+with ThreadPoolExecutor(max_workers=ALARM_WORKERS) as executor:
     # Procesar alarmas
     futures_alarma = {executor.submit(procesar_estacion_alarma, code): code for code in sa_codes}
     # Procesar cámaras
@@ -1082,7 +1165,32 @@ app.layout = html.Div([
             'borderRadius': '10px',
             'fontWeight': 'bold'
         })
-    ], style={'padding': '20px'})
+    ], style={'padding': '20px'}),
+
+    # Métricas de respuesta (al final del layout)
+    html.Div([
+        html.Div([
+            html.H3("Metadata respondieron", style={'margin': '0 0 5px 0'}),
+            html.P(f"{exitos_metadata}/{total_metadata_intentadas} estaciones", style={'margin': '0'}),
+            html.P(f"{pct_metadata}%", style={'margin': '0', 'fontSize': '18px', 'fontWeight': 'bold'})
+        ], style={
+            'backgroundColor': '#f8f9fa',
+            'padding': '10px 20px',
+            'borderRadius': '8px',
+            'boxShadow': '0 1px 3px rgba(0,0,0,0.1)'
+        }),
+
+        html.Div([
+            html.H3("Datos respondieron", style={'margin': '0 0 5px 0'}),
+            html.P(f"{exitos_datos}/{total_estaciones_datos} estaciones", style={'margin': '0'}),
+            html.P(f"{pct_datos}%", style={'margin': '0', 'fontSize': '18px', 'fontWeight': 'bold'})
+        ], style={
+            'backgroundColor': '#f8f9fa',
+            'padding': '10px 20px',
+            'borderRadius': '8px',
+            'boxShadow': '0 1px 3px rgba(0,0,0,0.1)'
+        })
+    ], style={'display': 'flex', 'gap': '20px', 'justifyContent': 'center', 'padding': '10px 0'}),
 
     ### Hasta acá prueba
     ])

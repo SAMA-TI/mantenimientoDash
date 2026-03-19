@@ -59,6 +59,75 @@ def safe_get(url, timeout=10, attempts=3):
     print(f"❌ Todos los reintentos fallaron para {url}")
     return None
 
+# --- Fetch station codes dynamically from API ---
+def fetch_station_codes():
+    """Obtiene los códigos de estaciones dinámicamente desde la API.
+    Retorna un diccionario con claves 'sp', 'sn', 'sm', 'sa'.
+    En caso de error, utiliza listas de respaldo predefinidas.
+    """
+    fallback_sp = ["101", "102", "103", "104", "106", "108", "109", "131", "132", "133", "134", "135",
+                   "136", "137", "138", "139", "140", "141", "142", "143", "144", "145", "146", "147",
+                   "149", "150", "151", "152", "154", "155", "156", "157", "158", "159", "160", "161", "162",
+                   "163", "164", "165", "166", "167", "168", "169", "170", "171", "172", "173", "174", "175", "176"]
+    fallback_sn = ['1001', '1002', '1003', '1004', '1005', '1007', '1008', '1009', '1010', '1011', '1012', '1013',
+                   '1014', '1015', '1016', '1018', '1019', '1021', '1022', '1023', '1030', '1031', '1032', '1033',
+                   '1034', '1035', '1036', '1037', '1038', '1039', '1040', '1041', '1042', '1043', '1044', '1045',
+                   '1046', '1047', '1048', '1049', '1050', '1051', '1052', '1053', '1054', '1055','1056', '1057', '1058', '1059']
+    fallback_sm = ['501', '502', '503', '504', '505', '506', '507', '508', '509', '510', '511', '512',
+                   '513', '514', '515', '516', '517']
+    fallback_sa = ['1036', '3030', '3031', '3032', '3033', '3034', '3035', '3037', '3038', '3039',
+                   '3040', '3041', '3042', '3043', '3044', '3045', '3046', '3047', '3048', '3049',
+                   '3050', '3051', '3052', '3053', '3054', '3055', '3056', '3057', '3058', '3059']
+
+    url = "https://sigran.antioquia.gov.co/api/v1/estaciones/"
+    try:
+        resp = safe_get(url, timeout=15)
+        if resp is None or resp.status_code != 200:
+            print("⚠️ No se pudo obtener lista de estaciones. Usando códigos predeterminados...")
+            return {'sp': fallback_sp, 'sn': fallback_sn, 'sm': fallback_sm, 'sa': fallback_sa}
+
+        values = resp.json().get('values', [])
+        sp, sn, sm, sa = [], [], [], []
+
+        for station in values:
+            codigo = station.get('codigo', '')
+            tipo = (station.get('tipo') or '').upper()
+
+            if tipo == 'ALARMA':
+                # Alarm stations: extract sa_ code from nombre_web (e.g. "sa_3030 - ...")
+                nombre_web = station.get('nombre_web', '')
+                if nombre_web.startswith('sa_'):
+                    code = nombre_web.split('_', 1)[1].split(' ')[0]
+                    if code:
+                        sa.append(code)
+            elif codigo.startswith('sp_'):
+                sp.append(codigo.split('_', 1)[1])
+            elif codigo.startswith('sn_'):
+                sn.append(codigo.split('_', 1)[1])
+            elif codigo.startswith('sm_'):
+                sm.append(codigo.split('_', 1)[1])
+
+        result = {
+            'sp': sp or fallback_sp,
+            'sn': sn or fallback_sn,
+            'sm': sm or fallback_sm,
+            'sa': sa or fallback_sa,
+        }
+        print(f"✅ Códigos obtenidos desde API: sp={len(result['sp'])}, sn={len(result['sn'])}, sm={len(result['sm'])}, sa={len(result['sa'])}")
+        return result
+
+    except Exception as e:
+        print(f"⚠️ Error al obtener lista de estaciones: {e}. Usando códigos predeterminados...")
+        return {'sp': fallback_sp, 'sn': fallback_sn, 'sm': fallback_sm, 'sa': fallback_sa}
+
+
+print("🔄 Obteniendo lista de estaciones desde API...")
+_station_codes = fetch_station_codes()
+sp_codes = _station_codes['sp']
+sn_codes = _station_codes['sn']
+sm_codes = _station_codes['sm']
+sa_codes = _station_codes['sa']
+
 # Default concurrency limits (puedes ajustar vía variables de entorno)
 METADATA_WORKERS = int(os.environ.get('METADATA_WORKERS', '5'))
 DATA_WORKERS = int(os.environ.get('DATA_WORKERS', '6'))
@@ -321,19 +390,6 @@ df_interrupciones.columns = [
 # Desactivar advertencias SSL
 warnings.filterwarnings("ignore", category=InsecureRequestWarning)
 
-# Estaciones por tipo
-sp_codes = ["101", "102", "103", "104", "106", "108", "109", "131", "132", "133", "134", "135", 
-            "136", "137", "138", "139", "140", "141", "142", "143", "144", "145", "146", "147", 
-            "149", "150", "151", "152", "154", "155", "156","157","158","159","160", "161", "162",
-             "163", "164", "165", "166", "167","168", "169","170", "171", "172"]
-
-sn_codes = ['1001', '1002', '1003', '1004', '1005', '1007', '1008', '1009', '1010', '1011', '1012', '1013',
-            '1014', '1015', '1016', '1018', '1019', '1021', '1022', '1023', '1030', '1031', '1032', '1033',
-            '1034', '1035', '1036', '1037', '1038', '1039', '1040', '1041', '1042', '1043', '1044', '1045', 
-            '1046', '1047', '1048', '1049', '1050', '1051', '1052', '1053', '1054', '1055']
-
-sm_codes =  ['501', '502', '503', '504', '505', '506', '507', '508', '509', '510', '511', '512', '513', '514', '515', '516', '517']
-
 # Función para obtener metadata de estación
 def obtener_metadata_estacion(tipo, code):
     url = f"https://sigran.antioquia.gov.co/api/v1/estaciones/{tipo}_{code}/"
@@ -495,24 +551,6 @@ fecha_formateada
 
 # Desactivar advertencias SSL
 warnings.filterwarnings("ignore", category=InsecureRequestWarning)
-
-# Estaciones de precipitación (sp)
-sp_codes = ["101", "102", "103", "104", "106", "108", "109", "131", "132", "133", "134", "135", 
-            "136", "137", "138", "139", "140", "141", "142", "143", "144", "145", "146", "147", 
-            "149", "150", "151", "152", "154", "155", "156", "157","158","159","160", "161", "162",
-            "163"]
-
-# Estaciones de nivel (sn)
-sn_codes = ['1001', '1002', '1003', '1004', '1005', '1007', '1008', '1009', '1010', '1011', '1012', '1013',
-            '1014', '1015', '1016', '1018', '1019', '1021', '1022', '1023', '1030', '1031', '1032', '1033',
-            '1034', '1035', '1036', '1037', '1038', '1039', '1040', '1041', '1042', '1043', '1044', '1045', 
-            '1046', '1047', '1048','1049', '1050', '1051','1052']
-
-#Estaciones de meteorología (sm)
-sm_codes =  ['501', '502', '503', '504', '505', '506', '507', '508', '509', '510', '511', '512', '513', '514', '515', '516', '517']
-        
-
-
 
 # Función para obtener datos por estación y calidad
 def obtener_datos(tipo, code, calidad):
@@ -685,13 +723,7 @@ df_ordenado = df_final[['estacion_code', 'Estado_ultima_semana',  'calidad_ultim
 # Desactivar advertencias SSL
 warnings.filterwarnings("ignore", category=InsecureRequestWarning)
 
-# Estaciones de alarma (sa)
-sa_codes = ['1036', '3030', '3031', '3032', '3033', '3034', '3035', '3037', '3038', '3039',
-            '3040', '3041', '3042', '3043', '3044', '3045', '3046', '3047', '3048', '3049',
-            '3050', '3051', '3052', '3053', '3054', '3055', '3056', '3057', '3058', '3059']
-
-# Estaciones de cámara (sn)
-sn_codes = ['1008', '1009', '1010', '1011', '1012', '1013', '1014', '1015']
+# sa_codes y sn_codes obtenidos dinámicamente al inicio del script
 
 # Fecha actual en UTC
 hoy = datetime.now(timezone.utc)
@@ -1083,7 +1115,7 @@ app.title = "Mantenimiento SAMA"
 
 app.layout = html.Div([
     html.H1(
-        "🔧Tablero de Monitoreo de Estaciones para Mantenimiento- SAMA",
+        "🔧Tablero de Monitoreo de Estaciones para Mantenimientoa- SAMA",
         style={
             'textAlign': 'center',
             'color': '#007BFF'  # Azul Bootstrap

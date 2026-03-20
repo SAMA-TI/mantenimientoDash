@@ -1115,7 +1115,7 @@ app.title = "Mantenimiento SAMA"
 
 app.layout = html.Div([
     html.H1(
-        "🔧Tablero de Monitoreo de Estaciones para Mantenimientoa- SAMA",
+        "🔧Tablero de Monitoreo de Estaciones para Mantenimiento- SAMA",
         style={
             'textAlign': 'center',
             'color': '#007BFF'  # Azul Bootstrap
